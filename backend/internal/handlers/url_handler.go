@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -10,12 +11,18 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// URLServiceAPI is what the handler needs from the service layer.
+type URLServiceAPI interface {
+	Shorten(ctx context.Context, longURL string) (string, error)
+	Resolve(ctx context.Context, shortCode string) (string, error)
+}
+
 type URLHandler struct {
-	service *services.URLService
+	service URLServiceAPI
 	baseURL string
 }
 
-func NewURLHandler(service *services.URLService, baseURL string) *URLHandler {
+func NewURLHandler(service URLServiceAPI, baseURL string) *URLHandler {
 	return &URLHandler{service: service, baseURL: baseURL}
 }
 

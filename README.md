@@ -64,6 +64,18 @@ go run ./cmd/api
 
 The API will be available at `http://localhost:8080`.
 
+### Running tests
+
+```bash
+# Fast unit tests only
+make test-unit
+
+# Full test suite (includes integration tests using testcontainers)
+make test
+```
+
+Integration tests require Docker to be running — they automatically spin up disposable Postgres and Redis containers via `testcontainers-go`.
+
 ### Try it out
 
 ```bash
@@ -108,7 +120,7 @@ url-shortener/
 - [ ] QR code generation
 - [ ] Analytics dashboard (Next.js)
 - [ ] Performance tracing with Sentry APM
-- [ ] Comprehensive test suite
+- [x] Comprehensive test suite
 - [ ] Deployment to Railway/Fly.io
 
 ## Learnings
@@ -120,6 +132,7 @@ This project is a deep dive into backend engineering with Go. Key concepts explo
 - **Database design:** schema normalization, indexes, migrations
 - **Observability:** structured logging, error tracking, request tracing
 - **Operational concerns:** privacy-conscious error reporting, healthchecks, configuration
+- **Testing strategy:** unit tests with hand-rolled mocks, integration tests with testcontainers
 
 ## License
 

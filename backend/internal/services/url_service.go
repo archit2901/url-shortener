@@ -14,13 +14,28 @@ import (
 
 var ErrInvalidURL = errors.New("invalid url")
 
+// URLRepository is what the service needs from the repository layer.
+// Defining it as an interface here lets us mock it in tests.
+type URLRepository interface {
+	Create(ctx context.Context, longURL string) (*repository.URL, error)
+	SetShortCode(ctx context.Context, id int64, code string) error
+	GetByShortCode(ctx context.Context, code string) (*repository.URL, error)
+}
+
+// URLCache is what the service needs from the cache layer.
+type URLCache interface {
+	Get(ctx context.Context, shortCode string) (string, error)
+	Set(ctx context.Context, shortCode, longURL string) error
+	Delete(ctx context.Context, shortCode string) error
+}
+
 type URLService struct {
-	repo  *repository.URLRepository
-	cache *cache.URLCache
+	repo  URLRepository
+	cache URLCache
 	log   *slog.Logger
 }
 
-func NewURLService(repo *repository.URLRepository, urlCache *cache.URLCache, log *slog.Logger) *URLService {
+func NewURLService(repo URLRepository, urlCache URLCache, log *slog.Logger) *URLService {
 	return &URLService{repo: repo, cache: urlCache, log: log}
 }
 
