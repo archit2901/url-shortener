@@ -26,8 +26,8 @@ A production-grade URL shortener built with Go, PostgreSQL, and Redis. Features 
 
 The system follows a cache-aside pattern for read-heavy redirect traffic, with async-friendly design ready for horizontal scaling.
 [Client] → [Go API (Gin)] → [Redis cache]
-↓ miss        ↘
-[PostgreSQL]  → [Sentry]
+↓ miss ↘
+[PostgreSQL] → [Sentry]
 
 Key design decisions are documented in [`docs/architecture.md`](docs/architecture.md) (coming soon).
 
@@ -43,7 +43,7 @@ Key design decisions are documented in [`docs/architecture.md`](docs/architectur
 
 ```bash
 # Clone the repo
-git clone git@github.com:yourusername/url-shortener.git
+git clone git@github.com:archit2901/url-shortener.git
 cd url-shortener
 
 # Copy environment template and fill in secrets
@@ -79,19 +79,20 @@ curl -i http://localhost:8080/1
 ```
 
 ## Project structure
+
 url-shortener/
 ├── backend/
-│   ├── cmd/api/              # API entry point
-│   ├── internal/
-│   │   ├── cache/            # Redis cache layer
-│   │   ├── handlers/         # HTTP handlers
-│   │   ├── observability/    # Sentry setup
-│   │   ├── repository/       # Database access
-│   │   ├── services/         # Business logic
-│   │   └── shortener/        # Base62 encoder
-│   └── db/migrations/        # SQL migrations
-├── docker-compose.yml        # Local Postgres + Redis
-└── .env.example              # Required environment variables
+│ ├── cmd/api/ # API entry point
+│ ├── internal/
+│ │ ├── cache/ # Redis cache layer
+│ │ ├── handlers/ # HTTP handlers
+│ │ ├── observability/ # Sentry setup
+│ │ ├── repository/ # Database access
+│ │ ├── services/ # Business logic
+│ │ └── shortener/ # Base62 encoder
+│ └── db/migrations/ # SQL migrations
+├── docker-compose.yml # Local Postgres + Redis
+└── .env.example # Required environment variables
 
 ## Roadmap
 
