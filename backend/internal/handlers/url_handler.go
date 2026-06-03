@@ -6,6 +6,7 @@ import (
 
 	"github.com/archit2901/url-shortener/backend/internal/repository"
 	"github.com/archit2901/url-shortener/backend/internal/services"
+	"github.com/getsentry/sentry-go"
 	"github.com/gin-gonic/gin"
 )
 
@@ -28,7 +29,6 @@ type shortenResponse struct {
 	LongURL   string `json:"long_url"`
 }
 
-// Shorten handles POST /api/shorten.
 func (h *URLHandler) Shorten(c *gin.Context) {
 	var req shortenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -42,6 +42,12 @@ func (h *URLHandler) Shorten(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid url"})
 			return
 		}
+		// Unexpected error: report to Sentry with request context
+		if hub := sentry.GetHubFromContext(c.Request.Context()); hub != nil {
+			hub.CaptureException(err)
+		} else {
+			sentry.CaptureException(err)
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to shorten url"})
 		return
 	}
@@ -53,7 +59,6 @@ func (h *URLHandler) Shorten(c *gin.Context) {
 	})
 }
 
-// Redirect handles GET /:code.
 func (h *URLHandler) Redirect(c *gin.Context) {
 	code := c.Param("code")
 
@@ -62,6 +67,12 @@ func (h *URLHandler) Redirect(c *gin.Context) {
 		if errors.Is(err, repository.ErrURLNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "short url not found"})
 			return
+		}
+		// Unexpected error
+		if hub := sentry.GetHubFromContext(c.Request.Context()); hub != nil {
+			hub.CaptureException(err)
+		} else {
+			sentry.CaptureException(err)
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve url"})
 		return

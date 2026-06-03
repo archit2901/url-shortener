@@ -6,19 +6,33 @@ import (
 	"net/http"
 	"os"
 
+	sentrygin "github.com/getsentry/sentry-go/gin"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 
 	"github.com/archit2901/url-shortener/backend/internal/handlers"
+	"github.com/archit2901/url-shortener/backend/internal/observability"
 	"github.com/archit2901/url-shortener/backend/internal/repository"
 	"github.com/archit2901/url-shortener/backend/internal/services"
 )
+
+// version is set at build time via -ldflags. Defaults to "dev" for local runs.
+var version = "dev"
 
 func main() {
 	_ = godotenv.Load("../.env")
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	// Initialize Sentry first so it can catch errors from the rest of init
+	flushSentry, err := observability.InitSentry(version)
+	if err != nil {
+		logger.Error("failed to init sentry", "error", err)
+		os.Exit(1)
+	}
+	defer flushSentry()
+	logger.Info("sentry initialized", "version", version)
 
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
@@ -45,12 +59,17 @@ func main() {
 	}
 	logger.Info("connected to database")
 
-	// Wire up the layers
 	urlRepo := repository.NewURLRepository(pool)
 	urlService := services.NewURLService(urlRepo)
 	urlHandler := handlers.NewURLHandler(urlService, baseURL)
 
 	r := gin.Default()
+
+	// Sentry middleware: captures panics and creates a transaction per request.
+	// Must come early so it sees every request.
+	r.Use(sentrygin.New(sentrygin.Options{
+		Repanic: true, // re-throw after capturing so gin.Recovery can return 500
+	}))
 
 	r.GET("/health", func(c *gin.Context) {
 		if err := pool.Ping(c.Request.Context()); err != nil {
