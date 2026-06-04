@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -15,16 +16,14 @@ import (
 	"github.com/archit2901/url-shortener/backend/internal/repository"
 )
 
-// --- Mocks ---
-
 type mockRepo struct {
-	createFn       func(ctx context.Context, longURL string) (*repository.URL, error)
+	createFn       func(ctx context.Context, longURL string, userID *uuid.UUID) (*repository.URL, error)
 	setShortCodeFn func(ctx context.Context, id int64, code string) error
 	getByCodeFn    func(ctx context.Context, code string) (*repository.URL, error)
 }
 
-func (m *mockRepo) Create(ctx context.Context, longURL string) (*repository.URL, error) {
-	return m.createFn(ctx, longURL)
+func (m *mockRepo) Create(ctx context.Context, longURL string, userID *uuid.UUID) (*repository.URL, error) {
+	return m.createFn(ctx, longURL, userID)
 }
 func (m *mockRepo) SetShortCode(ctx context.Context, id int64, code string) error {
 	return m.setShortCodeFn(ctx, id, code)
@@ -75,11 +74,9 @@ func silentLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// --- Tests ---
-
 func TestShorten_Success(t *testing.T) {
 	repo := &mockRepo{
-		createFn: func(ctx context.Context, longURL string) (*repository.URL, error) {
+		createFn: func(ctx context.Context, longURL string, userID *uuid.UUID) (*repository.URL, error) {
 			return &repository.URL{ID: 42, LongURL: longURL, CreatedAt: time.Now()}, nil
 		},
 		setShortCodeFn: func(ctx context.Context, id int64, code string) error {
@@ -89,10 +86,10 @@ func TestShorten_Success(t *testing.T) {
 	mc := newMockCache()
 	svc := NewURLService(repo, mc, silentLogger())
 
-	code, err := svc.Shorten(context.Background(), "https://example.com")
+	code, err := svc.Shorten(context.Background(), "https://example.com", nil)
 
 	require.NoError(t, err)
-	assert.Equal(t, "G", code) // base62 of 42 is "G" (positions 36-61 are A-Z)
+	assert.Equal(t, "G", code)
 	assert.Equal(t, 1, mc.setCalls, "shorten should warm the cache")
 	assert.Equal(t, "https://example.com", mc.store["G"])
 }
@@ -100,14 +97,9 @@ func TestShorten_Success(t *testing.T) {
 func TestShorten_InvalidURL(t *testing.T) {
 	svc := NewURLService(&mockRepo{}, newMockCache(), silentLogger())
 
-	tests := []string{
-		"",
-		"not-a-url",
-		"ftp://example.com",
-		"   ",
-	}
+	tests := []string{"", "not-a-url", "ftp://example.com", "   "}
 	for _, badURL := range tests {
-		_, err := svc.Shorten(context.Background(), badURL)
+		_, err := svc.Shorten(context.Background(), badURL, nil)
 		assert.ErrorIs(t, err, ErrInvalidURL, "should reject %q", badURL)
 	}
 }

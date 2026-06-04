@@ -5,15 +5,16 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+
+	"github.com/archit2901/url-shortener/backend/internal/middleware"
 	"github.com/archit2901/url-shortener/backend/internal/repository"
 	"github.com/archit2901/url-shortener/backend/internal/services"
-	"github.com/getsentry/sentry-go"
-	"github.com/gin-gonic/gin"
 )
 
-// URLServiceAPI is what the handler needs from the service layer.
 type URLServiceAPI interface {
-	Shorten(ctx context.Context, longURL string) (string, error)
+	Shorten(ctx context.Context, longURL string, userID *uuid.UUID) (string, error)
 	Resolve(ctx context.Context, shortCode string) (string, error)
 }
 
@@ -43,18 +44,21 @@ func (h *URLHandler) Shorten(c *gin.Context) {
 		return
 	}
 
-	shortCode, err := h.service.Shorten(c.Request.Context(), req.URL)
+	// Extract user ID if authenticated (via OptionalAuth middleware)
+	var userID *uuid.UUID
+	if v, ok := c.Get(middleware.UserIDKey); ok {
+		if id, ok := v.(uuid.UUID); ok {
+			userID = &id
+		}
+	}
+
+	shortCode, err := h.service.Shorten(c.Request.Context(), req.URL, userID)
 	if err != nil {
 		if errors.Is(err, services.ErrInvalidURL) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid url"})
 			return
 		}
-		// Unexpected error: report to Sentry with request context
-		if hub := sentry.GetHubFromContext(c.Request.Context()); hub != nil {
-			hub.CaptureException(err)
-		} else {
-			sentry.CaptureException(err)
-		}
+		captureUnexpected(c, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to shorten url"})
 		return
 	}
@@ -75,12 +79,7 @@ func (h *URLHandler) Redirect(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "short url not found"})
 			return
 		}
-		// Unexpected error
-		if hub := sentry.GetHubFromContext(c.Request.Context()); hub != nil {
-			hub.CaptureException(err)
-		} else {
-			sentry.CaptureException(err)
-		}
+		captureUnexpected(c, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve url"})
 		return
 	}

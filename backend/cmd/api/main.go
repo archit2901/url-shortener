@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	sentrygin "github.com/getsentry/sentry-go/gin"
@@ -13,8 +14,10 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/archit2901/url-shortener/backend/internal/auth"
 	"github.com/archit2901/url-shortener/backend/internal/cache"
 	"github.com/archit2901/url-shortener/backend/internal/handlers"
+	"github.com/archit2901/url-shortener/backend/internal/middleware"
 	"github.com/archit2901/url-shortener/backend/internal/observability"
 	"github.com/archit2901/url-shortener/backend/internal/repository"
 	"github.com/archit2901/url-shortener/backend/internal/services"
@@ -47,6 +50,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		logger.Error("JWT_SECRET not set")
+		os.Exit(1)
+	}
+
+	jwtExpiryHours := 24
+	if v := os.Getenv("JWT_EXPIRY_HOURS"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil {
+			jwtExpiryHours = parsed
+		}
+	}
+
 	baseURL := os.Getenv("BASE_URL")
 	if baseURL == "" {
 		baseURL = "http://localhost:8080"
@@ -54,7 +70,6 @@ func main() {
 
 	ctx := context.Background()
 
-	// Postgres
 	pool, err := pgxpool.New(ctx, dbURL)
 	if err != nil {
 		logger.Error("failed to create connection pool", "error", err)
@@ -67,7 +82,6 @@ func main() {
 	}
 	logger.Info("connected to database")
 
-	// Redis
 	redisOpts, err := redis.ParseURL(redisURL)
 	if err != nil {
 		logger.Error("invalid REDIS_URL", "error", err)
@@ -81,7 +95,14 @@ func main() {
 	}
 	logger.Info("connected to redis")
 
+	// Auth
+	authSvc := auth.NewService(jwtSecret, time.Duration(jwtExpiryHours)*time.Hour)
+
 	// Wire up the layers
+	userRepo := repository.NewUserRepository(pool)
+	authService := services.NewAuthService(userRepo, authSvc)
+	authHandler := handlers.NewAuthHandler(authService)
+
 	urlCache := cache.NewURLCache(redisClient, 24*time.Hour)
 	urlRepo := repository.NewURLRepository(pool)
 	urlService := services.NewURLService(urlRepo, urlCache, logger)
@@ -89,30 +110,25 @@ func main() {
 
 	r := gin.Default()
 
-	r.Use(sentrygin.New(sentrygin.Options{
-		Repanic: true,
-	}))
+	r.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
 
 	r.GET("/health", func(c *gin.Context) {
 		ctx := c.Request.Context()
 		if err := pool.Ping(ctx); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"status": "unhealthy",
-				"error":  "database: " + err.Error(),
-			})
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unhealthy", "error": "database: " + err.Error()})
 			return
 		}
 		if err := redisClient.Ping(ctx).Err(); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"status": "unhealthy",
-				"error":  "redis: " + err.Error(),
-			})
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unhealthy", "error": "redis: " + err.Error()})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	r.POST("/api/shorten", urlHandler.Shorten)
+	r.POST("/api/auth/register", authHandler.Register)
+	r.POST("/api/auth/login", authHandler.Login)
+
+	r.POST("/api/shorten", middleware.OptionalAuth(authSvc), urlHandler.Shorten)
 	r.GET("/:code", urlHandler.Redirect)
 
 	logger.Info("starting server", "addr", ":8080")

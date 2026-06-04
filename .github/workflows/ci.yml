@@ -66,6 +66,7 @@ jobs:
         env:
           DATABASE_URL: postgres://shortener:shortener_dev_password@localhost:5432/shortener?sslmode=disable
           REDIS_URL: redis://localhost:6379
+          JWT_SECRET: ci-test-secret-not-used-in-production
         run: go test -run Integration -v ./tests/...
 
   lint:

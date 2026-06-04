@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -17,17 +18,13 @@ import (
 	"github.com/archit2901/url-shortener/backend/internal/services"
 )
 
-// We test the handler against a mock service.
-// Since URLHandler depends on *services.URLService directly, we'll
-// refactor it to take an interface in a moment.
-
 type mockURLService struct {
-	shortenFn func(ctx context.Context, longURL string) (string, error)
+	shortenFn func(ctx context.Context, longURL string, userID *uuid.UUID) (string, error)
 	resolveFn func(ctx context.Context, shortCode string) (string, error)
 }
 
-func (m *mockURLService) Shorten(ctx context.Context, longURL string) (string, error) {
-	return m.shortenFn(ctx, longURL)
+func (m *mockURLService) Shorten(ctx context.Context, longURL string, userID *uuid.UUID) (string, error) {
+	return m.shortenFn(ctx, longURL, userID)
 }
 func (m *mockURLService) Resolve(ctx context.Context, shortCode string) (string, error) {
 	return m.resolveFn(ctx, shortCode)
@@ -43,7 +40,7 @@ func setupRouter(h *URLHandler) *gin.Engine {
 
 func TestShortenHandler_Success(t *testing.T) {
 	svc := &mockURLService{
-		shortenFn: func(ctx context.Context, longURL string) (string, error) {
+		shortenFn: func(ctx context.Context, longURL string, userID *uuid.UUID) (string, error) {
 			return "abc", nil
 		},
 	}
@@ -82,7 +79,7 @@ func TestShortenHandler_MissingURLField(t *testing.T) {
 
 func TestShortenHandler_InvalidURL(t *testing.T) {
 	svc := &mockURLService{
-		shortenFn: func(ctx context.Context, longURL string) (string, error) {
+		shortenFn: func(ctx context.Context, longURL string, userID *uuid.UUID) (string, error) {
 			return "", services.ErrInvalidURL
 		},
 	}
@@ -110,7 +107,6 @@ func TestRedirectHandler_Success(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/abc", nil)
 	rec := httptest.NewRecorder()
-
 	r.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusFound, rec.Code)
@@ -128,7 +124,6 @@ func TestRedirectHandler_NotFound(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
 	rec := httptest.NewRecorder()
-
 	r.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
@@ -145,7 +140,6 @@ func TestRedirectHandler_InternalError(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/abc", nil)
 	rec := httptest.NewRecorder()
-
 	r.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)

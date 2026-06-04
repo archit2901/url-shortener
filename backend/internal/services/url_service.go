@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/archit2901/url-shortener/backend/internal/cache"
 	"github.com/archit2901/url-shortener/backend/internal/repository"
 	"github.com/archit2901/url-shortener/backend/internal/shortener"
@@ -14,15 +16,12 @@ import (
 
 var ErrInvalidURL = errors.New("invalid url")
 
-// URLRepository is what the service needs from the repository layer.
-// Defining it as an interface here lets us mock it in tests.
 type URLRepository interface {
-	Create(ctx context.Context, longURL string) (*repository.URL, error)
+	Create(ctx context.Context, longURL string, userID *uuid.UUID) (*repository.URL, error)
 	SetShortCode(ctx context.Context, id int64, code string) error
 	GetByShortCode(ctx context.Context, code string) (*repository.URL, error)
 }
 
-// URLCache is what the service needs from the cache layer.
 type URLCache interface {
 	Get(ctx context.Context, shortCode string) (string, error)
 	Set(ctx context.Context, shortCode, longURL string) error
@@ -39,13 +38,13 @@ func NewURLService(repo URLRepository, urlCache URLCache, log *slog.Logger) *URL
 	return &URLService{repo: repo, cache: urlCache, log: log}
 }
 
-func (s *URLService) Shorten(ctx context.Context, longURL string) (string, error) {
+func (s *URLService) Shorten(ctx context.Context, longURL string, userID *uuid.UUID) (string, error) {
 	longURL = strings.TrimSpace(longURL)
 	if !isValidURL(longURL) {
 		return "", ErrInvalidURL
 	}
 
-	u, err := s.repo.Create(ctx, longURL)
+	u, err := s.repo.Create(ctx, longURL, userID)
 	if err != nil {
 		return "", err
 	}
@@ -56,9 +55,7 @@ func (s *URLService) Shorten(ctx context.Context, longURL string) (string, error
 		return "", err
 	}
 
-	// Warm the cache eagerly — a newly shortened URL is likely to be clicked soon.
 	if err := s.cache.Set(ctx, shortCode, longURL); err != nil {
-		// Log but don't fail the request: cache failures shouldn't break shorten
 		s.log.Warn("failed to populate cache after shorten", "short_code", shortCode, "error", err)
 	}
 
@@ -66,23 +63,19 @@ func (s *URLService) Shorten(ctx context.Context, longURL string) (string, error
 }
 
 func (s *URLService) Resolve(ctx context.Context, shortCode string) (string, error) {
-	// 1. Try the cache first
 	cached, err := s.cache.Get(ctx, shortCode)
 	if err == nil {
 		return cached, nil
 	}
 	if !errors.Is(err, cache.ErrCacheMiss) {
-		// Some other Redis error: log it but continue to DB (graceful degradation)
 		s.log.Warn("cache get failed, falling back to db", "short_code", shortCode, "error", err)
 	}
 
-	// 2. Cache miss (or Redis error): look up in Postgres
 	u, err := s.repo.GetByShortCode(ctx, shortCode)
 	if err != nil {
 		return "", err
 	}
 
-	// 3. Populate the cache for next time
 	if err := s.cache.Set(ctx, shortCode, u.LongURL); err != nil {
 		s.log.Warn("failed to populate cache after db lookup", "short_code", shortCode, "error", err)
 	}

@@ -119,7 +119,7 @@ func TestIntegration_ShortenAndResolve(t *testing.T) {
 
 	ctx := context.Background()
 
-	code, err := svc.Shorten(ctx, "https://example.com/integration")
+	code, err := svc.Shorten(ctx, "https://example.com/integration", nil)
 	require.NoError(t, err)
 	assert.NotEmpty(t, code)
 
