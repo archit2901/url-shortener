@@ -1,5 +1,7 @@
 # URL Shortener
 
+[![CI](https://github.com/archit2901/url-shortener/actions/workflows/ci.yml/badge.svg)](https://github.com/archit2901/url-shortener/actions/workflows/ci.yml)
+
 A production-grade URL shortener built with Go, PostgreSQL, and Redis. Features distributed-systems-friendly design patterns including cache-aside, structured observability with Sentry, and a layered architecture suitable for horizontal scaling.
 
 > **Status:** Active development — building out features iteratively as a learning project. See [Roadmap](#roadmap) for what's done and what's next.
