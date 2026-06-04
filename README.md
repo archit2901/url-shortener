@@ -115,7 +115,7 @@ url-shortener/
 - [x] Redis cache-aside for fast redirects
 - [x] Sentry error tracking
 - [ ] Async analytics worker for click tracking
-- [ ] User authentication with JWT
+- [x] User authentication with JWT
 - [ ] Rate limiting middleware
 - [ ] API key authentication
 - [ ] Custom aliases
