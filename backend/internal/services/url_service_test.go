@@ -21,6 +21,7 @@ type mockRepo struct {
 	createFn       func(ctx context.Context, longURL string, userID *uuid.UUID) (*repository.URL, error)
 	setShortCodeFn func(ctx context.Context, id int64, code string) error
 	getByCodeFn    func(ctx context.Context, code string) (*repository.URL, error)
+	listByUserFn   func(ctx context.Context, userID uuid.UUID, limit, offset int) ([]repository.URLWithStats, error)
 }
 
 func (m *mockRepo) Create(ctx context.Context, longURL string, userID *uuid.UUID) (*repository.URL, error) {
@@ -31,6 +32,23 @@ func (m *mockRepo) SetShortCode(ctx context.Context, id int64, code string) erro
 }
 func (m *mockRepo) GetByShortCode(ctx context.Context, code string) (*repository.URL, error) {
 	return m.getByCodeFn(ctx, code)
+}
+func (m *mockRepo) ListByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]repository.URLWithStats, error) {
+	if m.listByUserFn == nil {
+		return nil, nil
+	}
+	return m.listByUserFn(ctx, userID, limit, offset)
+}
+
+type mockStatsRepo struct {
+	statsFn func(ctx context.Context, urlID int64) (*repository.ClickStats, error)
+}
+
+func (m *mockStatsRepo) GetStatsForURL(ctx context.Context, urlID int64) (*repository.ClickStats, error) {
+	if m.statsFn == nil {
+		return &repository.ClickStats{}, nil
+	}
+	return m.statsFn(ctx, urlID)
 }
 
 type mockCache struct {
@@ -71,7 +89,6 @@ func (m *mockCache) Delete(ctx context.Context, code string) error {
 	return nil
 }
 
-// mockRecorder collects fired click events for assertion.
 type mockRecorder struct {
 	mu     sync.Mutex
 	clicks []repository.Click
@@ -104,7 +121,7 @@ func TestShorten_Success(t *testing.T) {
 		},
 	}
 	mc := newMockCache()
-	svc := NewURLService(repo, mc, &mockRecorder{}, silentLogger())
+	svc := NewURLService(repo, &mockStatsRepo{}, mc, &mockRecorder{}, silentLogger())
 
 	code, err := svc.Shorten(context.Background(), "https://example.com", nil)
 
@@ -115,7 +132,7 @@ func TestShorten_Success(t *testing.T) {
 }
 
 func TestShorten_InvalidURL(t *testing.T) {
-	svc := NewURLService(&mockRepo{}, newMockCache(), &mockRecorder{}, silentLogger())
+	svc := NewURLService(&mockRepo{}, &mockStatsRepo{}, newMockCache(), &mockRecorder{}, silentLogger())
 
 	tests := []string{"", "not-a-url", "ftp://example.com", "   "}
 	for _, badURL := range tests {
@@ -126,7 +143,6 @@ func TestShorten_InvalidURL(t *testing.T) {
 
 func TestResolve_CacheHit_RecordsClick(t *testing.T) {
 	repo := &mockRepo{
-		// After cache hit, service looks up urlID — return a row.
 		getByCodeFn: func(ctx context.Context, code string) (*repository.URL, error) {
 			return &repository.URL{ID: 7, LongURL: "https://cached.com"}, nil
 		},
@@ -135,7 +151,7 @@ func TestResolve_CacheHit_RecordsClick(t *testing.T) {
 	mc.store["abc"] = "https://cached.com"
 	rec := &mockRecorder{}
 
-	svc := NewURLService(repo, mc, rec, silentLogger())
+	svc := NewURLService(repo, &mockStatsRepo{}, mc, rec, silentLogger())
 
 	got, err := svc.Resolve(context.Background(), "abc", &ClickContext{IP: "1.2.3.4"})
 
@@ -155,7 +171,7 @@ func TestResolve_CacheHit_NoClickContext_NoRecord(t *testing.T) {
 	mc.store["abc"] = "https://cached.com"
 	rec := &mockRecorder{}
 
-	svc := NewURLService(repo, mc, rec, silentLogger())
+	svc := NewURLService(repo, &mockStatsRepo{}, mc, rec, silentLogger())
 
 	got, err := svc.Resolve(context.Background(), "abc", nil)
 
@@ -173,7 +189,7 @@ func TestResolve_CacheMiss_PopulatesCacheAndRecords(t *testing.T) {
 	mc := newMockCache()
 	rec := &mockRecorder{}
 
-	svc := NewURLService(repo, mc, rec, silentLogger())
+	svc := NewURLService(repo, &mockStatsRepo{}, mc, rec, silentLogger())
 	got, err := svc.Resolve(context.Background(), "1", &ClickContext{IP: "1.2.3.4"})
 
 	require.NoError(t, err)
@@ -188,7 +204,7 @@ func TestResolve_NotFound(t *testing.T) {
 			return nil, repository.ErrURLNotFound
 		},
 	}
-	svc := NewURLService(repo, newMockCache(), &mockRecorder{}, silentLogger())
+	svc := NewURLService(repo, &mockStatsRepo{}, newMockCache(), &mockRecorder{}, silentLogger())
 
 	_, err := svc.Resolve(context.Background(), "nope", &ClickContext{IP: "1.2.3.4"})
 	assert.ErrorIs(t, err, repository.ErrURLNotFound)
@@ -204,7 +220,7 @@ func TestResolve_CacheError_FallsBackToDB(t *testing.T) {
 	mc.getErr = errors.New("redis is down")
 	rec := &mockRecorder{}
 
-	svc := NewURLService(repo, mc, rec, silentLogger())
+	svc := NewURLService(repo, &mockStatsRepo{}, mc, rec, silentLogger())
 	got, err := svc.Resolve(context.Background(), "1", nil)
 
 	require.NoError(t, err, "cache failure should not break resolution")
@@ -220,7 +236,7 @@ func TestResolve_RecordsHashedIP(t *testing.T) {
 	mc := newMockCache()
 	rec := &mockRecorder{}
 
-	svc := NewURLService(repo, mc, rec, silentLogger())
+	svc := NewURLService(repo, &mockStatsRepo{}, mc, rec, silentLogger())
 	_, err := svc.Resolve(context.Background(), "1", &ClickContext{IP: "1.2.3.4"})
 	require.NoError(t, err)
 

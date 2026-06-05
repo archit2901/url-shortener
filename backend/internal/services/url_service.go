@@ -17,18 +17,27 @@ import (
 	"github.com/archit2901/url-shortener/backend/internal/shortener"
 )
 
-var ErrInvalidURL = errors.New("invalid url")
+var (
+	ErrInvalidURL   = errors.New("invalid url")
+	ErrUnauthorized = errors.New("unauthorized")
+)
 
 type URLRepository interface {
 	Create(ctx context.Context, longURL string, userID *uuid.UUID) (*repository.URL, error)
 	SetShortCode(ctx context.Context, id int64, code string) error
 	GetByShortCode(ctx context.Context, code string) (*repository.URL, error)
+	ListByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]repository.URLWithStats, error)
 }
 
 type URLCache interface {
 	Get(ctx context.Context, shortCode string) (string, error)
 	Set(ctx context.Context, shortCode, longURL string) error
 	Delete(ctx context.Context, shortCode string) error
+}
+
+// ClickStatsRepository is what the service needs to read click analytics.
+type ClickStatsRepository interface {
+	GetStatsForURL(ctx context.Context, urlID int64) (*repository.ClickStats, error)
 }
 
 // ClickRecorder is what the service needs from the analytics layer.
@@ -48,14 +57,27 @@ type ClickContext struct {
 }
 
 type URLService struct {
-	repo     URLRepository
-	cache    URLCache
-	recorder ClickRecorder
-	log      *slog.Logger
+	repo      URLRepository
+	statsRepo ClickStatsRepository
+	cache     URLCache
+	recorder  ClickRecorder
+	log       *slog.Logger
 }
 
-func NewURLService(repo URLRepository, urlCache URLCache, recorder ClickRecorder, log *slog.Logger) *URLService {
-	return &URLService{repo: repo, cache: urlCache, recorder: recorder, log: log}
+func NewURLService(
+	repo URLRepository,
+	statsRepo ClickStatsRepository,
+	urlCache URLCache,
+	recorder ClickRecorder,
+	log *slog.Logger,
+) *URLService {
+	return &URLService{
+		repo:      repo,
+		statsRepo: statsRepo,
+		cache:     urlCache,
+		recorder:  recorder,
+		log:       log,
+	}
 }
 
 func (s *URLService) Shorten(ctx context.Context, longURL string, userID *uuid.UUID) (string, error) {
@@ -164,4 +186,36 @@ func isValidURL(s string) bool {
 		return false
 	}
 	return true
+}
+
+// ListUserURLs returns paginated URLs owned by a user with their click counts.
+func (s *URLService) ListUserURLs(ctx context.Context, userID uuid.UUID, limit, offset int) ([]repository.URLWithStats, error) {
+	// Defensive bounds — never trust the caller blindly
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return s.repo.ListByUserID(ctx, userID, limit, offset)
+}
+
+// GetStatsForCode returns click stats for a short code, but only if the
+// requesting user owns the URL. Returns ErrUnauthorized otherwise.
+func (s *URLService) GetStatsForCode(ctx context.Context, shortCode string, userID uuid.UUID) (*repository.ClickStats, error) {
+	// First fetch the URL to check ownership
+	u, err := s.repo.GetByShortCode(ctx, shortCode)
+	if err != nil {
+		return nil, err
+	}
+
+	// Ownership check — URL must belong to the requesting user
+	if u.UserID == nil || *u.UserID != userID {
+		// Return ErrUnauthorized rather than the URL info to avoid leaking
+		// whether the URL exists. From the user's perspective, "not yours"
+		// and "doesn't exist" should look the same.
+		return nil, ErrUnauthorized
+	}
+
+	return s.statsRepo.GetStatsForURL(ctx, u.ID)
 }

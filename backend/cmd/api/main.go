@@ -103,6 +103,7 @@ func main() {
 	userRepo := repository.NewUserRepository(pool)
 	urlRepo := repository.NewURLRepository(pool)
 	clickRepo := repository.NewClickRepository(pool)
+	statsRepo := repository.NewClickStatsRepository(pool)
 
 	// Analytics worker — must be started before the URL service uses it
 	analyticsWorker := analytics.New(analytics.DefaultConfig(), clickRepo, logger)
@@ -115,7 +116,7 @@ func main() {
 
 	// URL service depends on the worker
 	urlCache := cache.NewURLCache(redisClient, 24*time.Hour)
-	urlService := services.NewURLService(urlRepo, urlCache, analyticsWorker, logger)
+	urlService := services.NewURLService(urlRepo, statsRepo, urlCache, analyticsWorker, logger)
 	urlHandler := handlers.NewURLHandler(urlService, baseURL)
 
 	r := gin.Default()

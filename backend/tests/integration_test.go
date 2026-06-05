@@ -83,7 +83,6 @@ func setupTestRedis(t *testing.T) *redis.Client {
 	return client
 }
 
-// applyAllMigrations reads every *.up.sql file from dir and runs them in filename order.
 func applyAllMigrations(ctx context.Context, pool *pgxpool.Pool, dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -121,7 +120,7 @@ func TestIntegration_ShortenAndResolve(t *testing.T) {
 
 	repo := repository.NewURLRepository(pool)
 	urlCache := cache.NewURLCache(redisClient, time.Hour)
-	svc := services.NewURLService(repo, urlCache, nopRecorder{}, logger)
+	svc := services.NewURLService(repo, nil, urlCache, nopRecorder{}, logger)
 
 	ctx := context.Background()
 
@@ -154,7 +153,7 @@ func TestIntegration_NotFound(t *testing.T) {
 
 	repo := repository.NewURLRepository(pool)
 	urlCache := cache.NewURLCache(redisClient, time.Hour)
-	svc := services.NewURLService(repo, urlCache, nopRecorder{}, logger)
+	svc := services.NewURLService(repo, nil, urlCache, nopRecorder{}, logger)
 
 	_, err := svc.Resolve(context.Background(), "definitely-not-real", nil)
 	assert.ErrorIs(t, err, repository.ErrURLNotFound)
