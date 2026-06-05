@@ -139,6 +139,15 @@ func main() {
 	r.POST("/api/auth/login", authHandler.Login)
 
 	r.POST("/api/shorten", middleware.OptionalAuth(authSvc), urlHandler.Shorten)
+
+	// Authenticated endpoints — require valid JWT
+	authRequired := r.Group("/api")
+	authRequired.Use(middleware.RequireAuth(authSvc))
+	{
+		authRequired.GET("/urls", urlHandler.ListMyURLs)
+		authRequired.GET("/urls/:code/stats", urlHandler.GetStats)
+	}
+
 	r.GET("/:code", urlHandler.Redirect)
 
 	// HTTP server with graceful shutdown support
