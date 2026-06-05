@@ -69,3 +69,44 @@ func (r *URLRepository) GetByShortCode(ctx context.Context, code string) (*URL, 
 	}
 	return &u, nil
 }
+
+// URLWithStats is a URL plus its aggregate click count.
+type URLWithStats struct {
+	URL
+	ClickCount int64
+}
+
+// ListByUserID returns all URLs owned by a user with aggregated click counts,
+// newest first.
+func (r *URLRepository) ListByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]URLWithStats, error) {
+	query := `
+		SELECT u.id, u.short_code, u.long_url, u.user_id, u.created_at,
+		       COALESCE(c.click_count, 0) AS click_count
+		FROM urls u
+		LEFT JOIN (
+			SELECT url_id, COUNT(*) AS click_count
+			FROM clicks
+			GROUP BY url_id
+		) c ON c.url_id = u.id
+		WHERE u.user_id = $1
+		ORDER BY u.created_at DESC
+		LIMIT $2 OFFSET $3
+	`
+	rows, err := r.pool.Query(ctx, query, userID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []URLWithStats
+	for rows.Next() {
+		var u URLWithStats
+		if err := rows.Scan(
+			&u.ID, &u.ShortCode, &u.LongURL, &u.UserID, &u.CreatedAt, &u.ClickCount,
+		); err != nil {
+			return nil, err
+		}
+		results = append(results, u)
+	}
+	return results, rows.Err()
+}
