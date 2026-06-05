@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	sentrygin "github.com/getsentry/sentry-go/gin"
@@ -14,6 +17,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/archit2901/url-shortener/backend/internal/analytics"
 	"github.com/archit2901/url-shortener/backend/internal/auth"
 	"github.com/archit2901/url-shortener/backend/internal/cache"
 	"github.com/archit2901/url-shortener/backend/internal/handlers"
@@ -95,21 +99,26 @@ func main() {
 	}
 	logger.Info("connected to redis")
 
+	// Repositories
+	userRepo := repository.NewUserRepository(pool)
+	urlRepo := repository.NewURLRepository(pool)
+	clickRepo := repository.NewClickRepository(pool)
+
+	// Analytics worker — must be started before the URL service uses it
+	analyticsWorker := analytics.New(analytics.DefaultConfig(), clickRepo, logger)
+	analyticsWorker.Start()
+
 	// Auth
 	authSvc := auth.NewService(jwtSecret, time.Duration(jwtExpiryHours)*time.Hour)
-
-	// Wire up the layers
-	userRepo := repository.NewUserRepository(pool)
 	authService := services.NewAuthService(userRepo, authSvc)
 	authHandler := handlers.NewAuthHandler(authService)
 
+	// URL service depends on the worker
 	urlCache := cache.NewURLCache(redisClient, 24*time.Hour)
-	urlRepo := repository.NewURLRepository(pool)
-	urlService := services.NewURLService(urlRepo, urlCache, logger)
+	urlService := services.NewURLService(urlRepo, urlCache, analyticsWorker, logger)
 	urlHandler := handlers.NewURLHandler(urlService, baseURL)
 
 	r := gin.Default()
-
 	r.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
 
 	r.GET("/health", func(c *gin.Context) {
@@ -131,9 +140,42 @@ func main() {
 	r.POST("/api/shorten", middleware.OptionalAuth(authSvc), urlHandler.Shorten)
 	r.GET("/:code", urlHandler.Redirect)
 
-	logger.Info("starting server", "addr", ":8080")
-	if err := r.Run(":8080"); err != nil {
-		logger.Error("server failed", "error", err)
-		os.Exit(1)
+	// HTTP server with graceful shutdown support
+	srv := &http.Server{
+		Addr:    ":8080",
+		Handler: r,
 	}
+
+	// Run the server in a goroutine so we can listen for shutdown signals
+	go func() {
+		logger.Info("starting server", "addr", srv.Addr)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("server failed", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Wait for SIGINT (Ctrl+C) or SIGTERM (sent by Docker/Kubernetes on stop)
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	logger.Info("shutdown signal received, draining...")
+
+	// Step 1: Stop accepting new HTTP requests, finish in-flight ones (10s budget)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		logger.Error("http shutdown failed", "error", err)
+	} else {
+		logger.Info("http server stopped")
+	}
+
+	// Step 2: Drain the analytics worker (10s budget for any queued events)
+	workerCtx, cancelWorker := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelWorker()
+	if err := analyticsWorker.Stop(workerCtx); err != nil {
+		logger.Error("analytics worker stop failed", "error", err)
+	}
+
+	logger.Info("shutdown complete")
 }

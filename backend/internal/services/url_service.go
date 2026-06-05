@@ -2,10 +2,13 @@ package services
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -28,14 +31,31 @@ type URLCache interface {
 	Delete(ctx context.Context, shortCode string) error
 }
 
-type URLService struct {
-	repo  URLRepository
-	cache URLCache
-	log   *slog.Logger
+// ClickRecorder is what the service needs from the analytics layer.
+// Defined as an interface so we can mock it in tests and so the service
+// doesn't depend on the concrete worker.
+type ClickRecorder interface {
+	Record(click repository.Click) bool
 }
 
-func NewURLService(repo URLRepository, urlCache URLCache, log *slog.Logger) *URLService {
-	return &URLService{repo: repo, cache: urlCache, log: log}
+// ClickContext carries the request metadata needed to record a click.
+// We keep this separate from the cache lookup so the cache hit path
+// stays fast and the metadata can be nil-checked.
+type ClickContext struct {
+	IP        string
+	UserAgent string
+	Referrer  string
+}
+
+type URLService struct {
+	repo     URLRepository
+	cache    URLCache
+	recorder ClickRecorder
+	log      *slog.Logger
+}
+
+func NewURLService(repo URLRepository, urlCache URLCache, recorder ClickRecorder, log *slog.Logger) *URLService {
+	return &URLService{repo: repo, cache: urlCache, recorder: recorder, log: log}
 }
 
 func (s *URLService) Shorten(ctx context.Context, longURL string, userID *uuid.UUID) (string, error) {
@@ -62,25 +82,71 @@ func (s *URLService) Shorten(ctx context.Context, longURL string, userID *uuid.U
 	return shortCode, nil
 }
 
-func (s *URLService) Resolve(ctx context.Context, shortCode string) (string, error) {
+// Resolve looks up a short code and returns the long URL.
+// If clickCtx is non-nil, it also fires a click event for async recording.
+func (s *URLService) Resolve(ctx context.Context, shortCode string, clickCtx *ClickContext) (string, error) {
+	var (
+		longURL string
+		urlID   int64
+	)
+
+	// Try cache first
 	cached, err := s.cache.Get(ctx, shortCode)
 	if err == nil {
-		return cached, nil
-	}
-	if !errors.Is(err, cache.ErrCacheMiss) {
-		s.log.Warn("cache get failed, falling back to db", "short_code", shortCode, "error", err)
+		longURL = cached
+		// Only look up the urlID if the caller actually wants to record a click.
+		// On the no-analytics path, the cache hit returns instantly.
+		if clickCtx != nil && s.recorder != nil {
+			u, lookupErr := s.repo.GetByShortCode(ctx, shortCode)
+			if lookupErr != nil {
+				// We have a valid redirect but can't record analytics.
+				// Don't fail the redirect — analytics is best-effort.
+				s.log.Warn("cache hit but db lookup for id failed",
+					"short_code", shortCode, "error", lookupErr)
+				return longURL, nil
+			}
+			urlID = u.ID
+		}
+	} else {
+		if !errors.Is(err, cache.ErrCacheMiss) {
+			s.log.Warn("cache get failed, falling back to db", "short_code", shortCode, "error", err)
+		}
+
+		u, err := s.repo.GetByShortCode(ctx, shortCode)
+		if err != nil {
+			return "", err
+		}
+		longURL = u.LongURL
+		urlID = u.ID
+
+		if cacheErr := s.cache.Set(ctx, shortCode, u.LongURL); cacheErr != nil {
+			s.log.Warn("failed to populate cache after db lookup", "short_code", shortCode, "error", cacheErr)
+		}
 	}
 
-	u, err := s.repo.GetByShortCode(ctx, shortCode)
-	if err != nil {
-		return "", err
+	// Fire an async click event if we have the request context to record
+	if clickCtx != nil && s.recorder != nil {
+		s.recorder.Record(repository.Click{
+			URLID:     urlID,
+			IPHash:    hashIP(clickCtx.IP),
+			UserAgent: clickCtx.UserAgent,
+			Referrer:  clickCtx.Referrer,
+			ClickedAt: time.Now(),
+		})
 	}
 
-	if err := s.cache.Set(ctx, shortCode, u.LongURL); err != nil {
-		s.log.Warn("failed to populate cache after db lookup", "short_code", shortCode, "error", err)
-	}
+	return longURL, nil
+}
 
-	return u.LongURL, nil
+// hashIP returns a SHA-256 hex hash of an IP address. We hash for privacy:
+// we can still count unique visitors (same IP → same hash) without storing
+// raw addresses.
+func hashIP(ip string) string {
+	if ip == "" {
+		return ""
+	}
+	h := sha256.Sum256([]byte(ip))
+	return hex.EncodeToString(h[:])
 }
 
 func isValidURL(s string) bool {

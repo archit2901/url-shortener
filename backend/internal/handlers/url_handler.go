@@ -15,7 +15,7 @@ import (
 
 type URLServiceAPI interface {
 	Shorten(ctx context.Context, longURL string, userID *uuid.UUID) (string, error)
-	Resolve(ctx context.Context, shortCode string) (string, error)
+	Resolve(ctx context.Context, shortCode string, clickCtx *services.ClickContext) (string, error)
 }
 
 type URLHandler struct {
@@ -44,7 +44,6 @@ func (h *URLHandler) Shorten(c *gin.Context) {
 		return
 	}
 
-	// Extract user ID if authenticated (via OptionalAuth middleware)
 	var userID *uuid.UUID
 	if v, ok := c.Get(middleware.UserIDKey); ok {
 		if id, ok := v.(uuid.UUID); ok {
@@ -73,7 +72,13 @@ func (h *URLHandler) Shorten(c *gin.Context) {
 func (h *URLHandler) Redirect(c *gin.Context) {
 	code := c.Param("code")
 
-	longURL, err := h.service.Resolve(c.Request.Context(), code)
+	clickCtx := &services.ClickContext{
+		IP:        c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+		Referrer:  c.Request.Referer(),
+	}
+
+	longURL, err := h.service.Resolve(c.Request.Context(), code, clickCtx)
 	if err != nil {
 		if errors.Is(err, repository.ErrURLNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "short url not found"})

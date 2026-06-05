@@ -26,6 +26,12 @@ import (
 	"github.com/archit2901/url-shortener/backend/internal/services"
 )
 
+// nopRecorder is a stand-in ClickRecorder for integration tests that don't
+// exercise the analytics path.
+type nopRecorder struct{}
+
+func (nopRecorder) Record(repository.Click) bool { return true }
+
 func setupTestPostgres(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	ctx := context.Background()
@@ -115,7 +121,7 @@ func TestIntegration_ShortenAndResolve(t *testing.T) {
 
 	repo := repository.NewURLRepository(pool)
 	urlCache := cache.NewURLCache(redisClient, time.Hour)
-	svc := services.NewURLService(repo, urlCache, logger)
+	svc := services.NewURLService(repo, urlCache, nopRecorder{}, logger)
 
 	ctx := context.Background()
 
@@ -123,12 +129,12 @@ func TestIntegration_ShortenAndResolve(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, code)
 
-	got, err := svc.Resolve(ctx, code)
+	got, err := svc.Resolve(ctx, code, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "https://example.com/integration", got)
 
 	require.NoError(t, urlCache.Delete(ctx, code))
-	got, err = svc.Resolve(ctx, code)
+	got, err = svc.Resolve(ctx, code, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "https://example.com/integration", got)
 
@@ -148,8 +154,8 @@ func TestIntegration_NotFound(t *testing.T) {
 
 	repo := repository.NewURLRepository(pool)
 	urlCache := cache.NewURLCache(redisClient, time.Hour)
-	svc := services.NewURLService(repo, urlCache, logger)
+	svc := services.NewURLService(repo, urlCache, nopRecorder{}, logger)
 
-	_, err := svc.Resolve(context.Background(), "definitely-not-real")
+	_, err := svc.Resolve(context.Background(), "definitely-not-real", nil)
 	assert.ErrorIs(t, err, repository.ErrURLNotFound)
 }
