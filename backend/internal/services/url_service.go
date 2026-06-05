@@ -15,6 +15,7 @@ import (
 	"github.com/archit2901/url-shortener/backend/internal/cache"
 	"github.com/archit2901/url-shortener/backend/internal/repository"
 	"github.com/archit2901/url-shortener/backend/internal/shortener"
+	"github.com/getsentry/sentry-go"
 )
 
 var (
@@ -81,6 +82,9 @@ func NewURLService(
 }
 
 func (s *URLService) Shorten(ctx context.Context, longURL string, userID *uuid.UUID) (string, error) {
+	span := sentry.StartSpan(ctx, "service.shorten")
+	defer span.Finish()
+
 	longURL = strings.TrimSpace(longURL)
 	if !isValidURL(longURL) {
 		return "", ErrInvalidURL
@@ -91,7 +95,9 @@ func (s *URLService) Shorten(ctx context.Context, longURL string, userID *uuid.U
 		return "", err
 	}
 
+	encodeSpan := sentry.StartSpan(ctx, "encode.base62")
 	shortCode := shortener.Encode(uint64(u.ID))
+	encodeSpan.Finish()
 
 	if err := s.repo.SetShortCode(ctx, u.ID, shortCode); err != nil {
 		return "", err
@@ -107,22 +113,21 @@ func (s *URLService) Shorten(ctx context.Context, longURL string, userID *uuid.U
 // Resolve looks up a short code and returns the long URL.
 // If clickCtx is non-nil, it also fires a click event for async recording.
 func (s *URLService) Resolve(ctx context.Context, shortCode string, clickCtx *ClickContext) (string, error) {
+	span := sentry.StartSpan(ctx, "service.resolve")
+	defer span.Finish()
+
 	var (
 		longURL string
 		urlID   int64
 	)
 
-	// Try cache first
 	cached, err := s.cache.Get(ctx, shortCode)
 	if err == nil {
 		longURL = cached
-		// Only look up the urlID if the caller actually wants to record a click.
-		// On the no-analytics path, the cache hit returns instantly.
+		span.SetTag("cache.hit", "true")
 		if clickCtx != nil && s.recorder != nil {
 			u, lookupErr := s.repo.GetByShortCode(ctx, shortCode)
 			if lookupErr != nil {
-				// We have a valid redirect but can't record analytics.
-				// Don't fail the redirect — analytics is best-effort.
 				s.log.Warn("cache hit but db lookup for id failed",
 					"short_code", shortCode, "error", lookupErr)
 				return longURL, nil
@@ -130,6 +135,7 @@ func (s *URLService) Resolve(ctx context.Context, shortCode string, clickCtx *Cl
 			urlID = u.ID
 		}
 	} else {
+		span.SetTag("cache.hit", "false")
 		if !errors.Is(err, cache.ErrCacheMiss) {
 			s.log.Warn("cache get failed, falling back to db", "short_code", shortCode, "error", err)
 		}
@@ -146,7 +152,6 @@ func (s *URLService) Resolve(ctx context.Context, shortCode string, clickCtx *Cl
 		}
 	}
 
-	// Fire an async click event if we have the request context to record
 	if clickCtx != nil && s.recorder != nil {
 		s.recorder.Record(repository.Click{
 			URLID:     urlID,

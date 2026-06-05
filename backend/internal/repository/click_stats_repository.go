@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// ClickStats represents aggregated click data for a single URL.
 type ClickStats struct {
 	TotalClicks    int64
 	UniqueVisitors int64
@@ -19,7 +19,6 @@ type DailyClicks struct {
 	Clicks int64
 }
 
-// ClickStatsRepository handles analytics queries.
 type ClickStatsRepository struct {
 	pool *pgxpool.Pool
 }
@@ -28,11 +27,13 @@ func NewClickStatsRepository(pool *pgxpool.Pool) *ClickStatsRepository {
 	return &ClickStatsRepository{pool: pool}
 }
 
-// GetStatsForURL returns aggregate click data for a single URL over the last 30 days.
 func (r *ClickStatsRepository) GetStatsForURL(ctx context.Context, urlID int64) (*ClickStats, error) {
+	span := sentry.StartSpan(ctx, "db.query", sentry.WithDescription("compute click stats"))
+	defer span.Finish()
+
 	stats := &ClickStats{}
 
-	// 1. Total clicks + unique visitors (by hashed IP)
+	summarySpan := sentry.StartSpan(ctx, "db.query", sentry.WithDescription("SELECT total + unique"))
 	summaryQuery := `
 		SELECT COUNT(*) AS total,
 		       COUNT(DISTINCT ip_hash) FILTER (WHERE ip_hash <> '') AS unique_visitors
@@ -40,11 +41,12 @@ func (r *ClickStatsRepository) GetStatsForURL(ctx context.Context, urlID int64) 
 		WHERE url_id = $1
 	`
 	err := r.pool.QueryRow(ctx, summaryQuery, urlID).Scan(&stats.TotalClicks, &stats.UniqueVisitors)
+	summarySpan.Finish()
 	if err != nil {
 		return nil, err
 	}
 
-	// 2. Clicks per day for the last 30 days
+	dailySpan := sentry.StartSpan(ctx, "db.query", sentry.WithDescription("SELECT clicks by day"))
 	dailyQuery := `
 		SELECT DATE_TRUNC('day', clicked_at) AS day,
 		       COUNT(*) AS clicks
@@ -55,6 +57,7 @@ func (r *ClickStatsRepository) GetStatsForURL(ctx context.Context, urlID int64) 
 		ORDER BY day ASC
 	`
 	rows, err := r.pool.Query(ctx, dailyQuery, urlID)
+	dailySpan.Finish()
 	if err != nil {
 		return nil, err
 	}

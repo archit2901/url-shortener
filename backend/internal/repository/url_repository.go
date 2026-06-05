@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,6 +31,9 @@ func NewURLRepository(pool *pgxpool.Pool) *URLRepository {
 
 // Create inserts a new url row. userID may be nil for anonymous shortenings.
 func (r *URLRepository) Create(ctx context.Context, longURL string, userID *uuid.UUID) (*URL, error) {
+	span := sentry.StartSpan(ctx, "db.query", sentry.WithDescription("INSERT into urls"))
+	defer span.Finish()
+
 	query := `
 		INSERT INTO urls (long_url, user_id)
 		VALUES ($1, $2)
@@ -46,12 +50,18 @@ func (r *URLRepository) Create(ctx context.Context, longURL string, userID *uuid
 }
 
 func (r *URLRepository) SetShortCode(ctx context.Context, id int64, code string) error {
+	span := sentry.StartSpan(ctx, "db.query", sentry.WithDescription("UPDATE urls SET short_code"))
+	defer span.Finish()
+
 	query := `UPDATE urls SET short_code = $1 WHERE id = $2`
 	_, err := r.pool.Exec(ctx, query, code, id)
 	return err
 }
 
 func (r *URLRepository) GetByShortCode(ctx context.Context, code string) (*URL, error) {
+	span := sentry.StartSpan(ctx, "db.query", sentry.WithDescription("SELECT url by short_code"))
+	defer span.Finish()
+
 	query := `
 		SELECT id, short_code, long_url, user_id, created_at
 		FROM urls
@@ -79,6 +89,9 @@ type URLWithStats struct {
 // ListByUserID returns all URLs owned by a user with aggregated click counts,
 // newest first.
 func (r *URLRepository) ListByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]URLWithStats, error) {
+	span := sentry.StartSpan(ctx, "db.query", sentry.WithDescription("SELECT urls with stats by user"))
+	defer span.Finish()
+
 	query := `
 		SELECT u.id, u.short_code, u.long_url, u.user_id, u.created_at,
 		       COALESCE(c.click_count, 0) AS click_count

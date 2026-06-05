@@ -36,6 +36,7 @@ func InitSentry(release string) (func(), error) {
 		Environment:      environment,
 		Release:          release,
 		TracesSampleRate: tracesRate,
+		EnableTracing:    true,
 		// Send PII-stripped request data
 		SendDefaultPII: false,
 		// Scrub sensitive fields before transmitting
