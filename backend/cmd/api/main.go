@@ -25,6 +25,7 @@ import (
 	"github.com/archit2901/url-shortener/backend/internal/observability"
 	"github.com/archit2901/url-shortener/backend/internal/repository"
 	"github.com/archit2901/url-shortener/backend/internal/services"
+	"github.com/gin-contrib/cors"
 )
 
 var version = "dev"
@@ -121,6 +122,16 @@ func main() {
 
 	r := gin.Default()
 	r.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
+
+	// CORS — allow the frontend to call the API
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:3000"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
+		ExposeHeaders:    []string{"X-RateLimit-Limit", "X-RateLimit-Remaining", "Retry-After"},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+	}))
 
 	// Rate limiters
 	publicLimiter := middleware.NewRateLimiter(redisClient, middleware.RateLimiterConfig{
