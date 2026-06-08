@@ -36,3 +36,9 @@ build:
 
 clean:
 	rm -rf bin/
+
+run-frontend:
+	cd frontend && npm run dev
+
+run-all:
+	@echo "Start backend with 'make run' in one terminal and frontend with 'make run-frontend' in another"
