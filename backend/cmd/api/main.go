@@ -122,6 +122,18 @@ func main() {
 	r := gin.Default()
 	r.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
 
+	// Rate limiters
+	publicLimiter := middleware.NewRateLimiter(redisClient, middleware.RateLimiterConfig{
+		Limit:  30,
+		Window: time.Minute,
+		Prefix: "ratelimit:public",
+	})
+	authLimiter := middleware.NewRateLimiter(redisClient, middleware.RateLimiterConfig{
+		Limit:  300,
+		Window: time.Minute,
+		Prefix: "ratelimit:auth",
+	})
+
 	r.GET("/health", func(c *gin.Context) {
 		ctx := c.Request.Context()
 		if err := pool.Ping(ctx); err != nil {
@@ -135,20 +147,29 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	r.POST("/api/auth/register", authHandler.Register)
-	r.POST("/api/auth/login", authHandler.Login)
+	// Public auth endpoints — strict per-IP limit to deter credential stuffing
+	r.POST("/api/auth/register", publicLimiter.PerIP(), authHandler.Register)
+	r.POST("/api/auth/login", publicLimiter.PerIP(), authHandler.Login)
 
-	r.POST("/api/shorten", middleware.OptionalAuth(authSvc), urlHandler.Shorten)
+	// Shorten supports optional auth — uses PerUser so authenticated users
+	// get their generous limit, anonymous users get the IP-based public limit
+	r.POST("/api/shorten",
+		middleware.OptionalAuth(authSvc),
+		authLimiter.PerUser(),
+		urlHandler.Shorten,
+	)
 
-	// Authenticated endpoints — require valid JWT
+	// Authenticated endpoints — generous per-user limit
 	authRequired := r.Group("/api")
 	authRequired.Use(middleware.RequireAuth(authSvc))
+	authRequired.Use(authLimiter.PerUser())
 	{
 		authRequired.GET("/urls", urlHandler.ListMyURLs)
 		authRequired.GET("/urls/:code/stats", urlHandler.GetStats)
 	}
 
-	r.GET("/:code", urlHandler.Redirect)
+	// Redirect — public, strict IP limit
+	r.GET("/:code", publicLimiter.PerIP(), urlHandler.Redirect)
 
 	// HTTP server with graceful shutdown support
 	srv := &http.Server{
