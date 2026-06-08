@@ -12,8 +12,10 @@ import { Label } from "@/components/ui/label";
 
 import { useAuth } from "@/lib/auth-context";
 import { ApiError } from "@/lib/api";
+import { usePageTitle } from "@/lib/use-page-title";
 
 export default function LoginPage() {
+  usePageTitle("Sign in");
   const router = useRouter();
   const { login } = useAuth();
   const [email, setEmail] = useState("");

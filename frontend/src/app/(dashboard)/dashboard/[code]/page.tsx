@@ -20,11 +20,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 import { api, ApiError } from "@/lib/api";
 import { ClickStats } from "@/lib/types";
+import { usePageTitle } from "@/lib/use-page-title";
 
 export default function StatsPage() {
   const router = useRouter();
   const params = useParams<{ code: string }>();
   const code = params.code;
+  usePageTitle(code ? `/${code}` : "Stats");
 
   const [stats, setStats] = useState<ClickStats | null>(null);
   const [loading, setLoading] = useState(true);

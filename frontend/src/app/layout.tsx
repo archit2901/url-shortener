@@ -5,8 +5,11 @@ import { AuthProvider } from "@/lib/auth-context";
 import { Toaster } from "@/components/ui/sonner";
 
 export const metadata: Metadata = {
-  title: "URL Shortener",
-  description: "Fast, simple URL shortening with click analytics",
+  title: {
+    default: "URL Shortener",
+    template: "%s — URL Shortener",
+  },
+  description: "Fast URL shortening with click analytics, built with Go and Next.js.",
 };
 
 export default function RootLayout({

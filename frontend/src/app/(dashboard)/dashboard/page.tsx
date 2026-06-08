@@ -12,8 +12,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 
 import { api, ApiError } from "@/lib/api";
 import { URLListItem } from "@/lib/types";
+import { usePageTitle } from "@/lib/use-page-title";
 
 export default function DashboardPage() {
+  usePageTitle("Dashboard");
   const [url, setUrl] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [urls, setUrls] = useState<URLListItem[]>([]);
@@ -100,11 +102,16 @@ export default function DashboardPage() {
         <CardContent>
           {loadingUrls ? (
             <div className="space-y-2">
-              <Skeleton className="h-12 w-full" />
-              <Skeleton className="h-12 w-full" />
-              <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
             </div>
-          ) : urls.length === 0 ? null : (
+            ) : urls.length === 0 ? (
+            <div className="text-center py-12 text-sm text-muted-foreground">
+                <p>You haven&apos;t shortened any URLs yet.</p>
+                <p className="mt-1">Paste one above to get started.</p>
+            </div>
+            ) : (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -116,7 +123,7 @@ export default function DashboardPage() {
               </TableHeader>
               <TableBody>
                 {urls.map((u) => (
-                  <TableRow key={u.short_code}>
+                  <TableRow key={u.short_code} className="hover:bg-muted/50 transition-colors">
                     <TableCell className="font-mono">
                       <button
                         onClick={() => copyToClipboard(u.short_url)}
