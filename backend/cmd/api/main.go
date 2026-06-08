@@ -124,8 +124,13 @@ func main() {
 	r.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
 
 	// CORS — allow the frontend to call the API
+	allowedOrigin := os.Getenv("FRONTEND_URL")
+	if allowedOrigin == "" {
+		allowedOrigin = "http://localhost:3000"
+	}
+
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000"},
+		AllowOrigins:     []string{allowedOrigin},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
 		ExposeHeaders:    []string{"X-RateLimit-Limit", "X-RateLimit-Remaining", "Retry-After"},
@@ -183,8 +188,12 @@ func main() {
 	r.GET("/:code", publicLimiter.PerIP(), urlHandler.Redirect)
 
 	// HTTP server with graceful shutdown support
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
 	srv := &http.Server{
-		Addr:    ":8080",
+		Addr:    ":" + port,
 		Handler: r,
 	}
 

@@ -1,0 +1,11 @@
+*.md
+.git
+.gitignore
+.env
+.env.example
+.env.*.local
+tests/
+Dockerfile
+.dockerignore
+*.test
+*.out
